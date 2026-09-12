@@ -1,0 +1,23 @@
+node_modules/
+
+# Playwright output — traces, screenshots, the HTML report.
+test-results/
+playwright-report/
+blob-report/
+
+# Auth storage states written by global-setup.ts (a live session token).
+.auth/
+
+# This workspace has no .env of its own today — helpers/env.ts reads
+# ../tourney-api/.env directly — but ignore one anyway: if that ever changes,
+# a stray .env here must never land in git by default.
+.env
+.env.*
+!.env.example
+
+# Anything a spec downloads or generates at run time (share.spec.ts saves a
+# QR PNG via the browser's download event).
+downloads/
+*.download
+
+.DS_Store
