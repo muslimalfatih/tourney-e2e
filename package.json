@@ -1,17 +1,26 @@
 {
   "name": "tourney-e2e",
   "version": "1.0.0",
-  "description": "",
+  "description": "Browser end-to-end tests for tourney.social, driven through Playwright against a real API and database.",
+  "keywords": [
+    "playwright",
+    "end-to-end",
+    "testing",
+    "tourney.social"
+  ],
+  "author": "Muslim Alfatih",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/muslimalfatih/tourney-e2e.git"
+  },
+  "private": true,
+  "type": "commonjs",
   "scripts": {
     "test": "playwright test",
     "test:headed": "playwright test --headed"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
   "devDependencies": {
     "@playwright/test": "^1.62.1"
-  },
-  "private": true
+  }
 }

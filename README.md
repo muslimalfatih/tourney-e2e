@@ -1,173 +1,153 @@
 # tourney-e2e
 
-Browser end-to-end tests for [tourney.social](https://tourney.social) — auth,
-public tournament pages, organizer scheduling/scoring workflows, share/QR, and
-the presentation-mode deck. Playwright, its own workspace, its own npm tree.
+Browser end-to-end tests for [tourney.social](https://tourney.social), a tournament platform for tennis and padel.
 
-It lives apart from `tourney-web` on purpose: that app's dependency tree was
-hitting an Arborist bug, and a suite this size has no business sharing a
-`package.json` with the app it tests anyway.
+44 tests across 8 suites, driven through a real Chromium browser against a real API and a real database. They cover invitation-only OTP sign-in, the public tournament pages, the organizer scheduling and scoring workflows, sharing and QR, platform administration, and the presentation-mode deck.
 
-## How it fits together
+Built with [Playwright](https://playwright.dev). This repository is a standalone workspace: it has its own dependency tree and never shares a `package.json` with the application it tests.
+
+## Quick start
+
+You need [Node](https://nodejs.org) 24.10, [Go](https://go.dev) 1.25, and a local PostgreSQL. Check out `tourney-api` and `tourney-web` as sibling directories first — the launch scripts reach them by relative path.
+
+```sh
+# 1. Create a database that belongs to this suite alone
+createdb tourney_e2e
+
+# 2. Migrate and seed it
+cd ../tourney-api
+DATABASE_URL='postgresql://localhost:5432/tourney_e2e?sslmode=disable' go run ./cmd/migrate up
+DATABASE_URL='postgresql://localhost:5432/tourney_e2e?sslmode=disable' \
+  SEED_ADMIN_EMAIL=admin@laga.test \
+  SEED_ORGANIZER_EMAIL=organizer@laga.test \
+  SEED_ORG_NAME="Laga Demo" \
+  SEED_ORG_SLUG=laga-demo \
+  go run ./cmd/seed
+
+# 3. Point the suite at it
+cd ../tourney-e2e
+cp .env.example .env          # then set E2E_DATABASE_URL
+
+# 4. Run
+npm install
+npx playwright install chromium
+npm test
+```
+
+A full run takes two to four minutes.
+
+> [!WARNING]
+> **These tests are destructive.** Setup deletes every `e2e-%` tournament, user, and invitation, and the suites then create real records. Give the suite a database of its own. Both entry points refuse any `E2E_DATABASE_URL` that does not resolve to `localhost` or `127.0.0.1`, and neither prints the credentials when they reject one.
+
+## How it works
+
+Playwright starts and stops everything. You never launch a server by hand.
 
 ```
-../laga/
-  tourney-api/     ← this suite launches a FRESH instance on :8095
-  tourney-web/     ← this suite launches a dev server on :4400, pointed at :8095
-  tourney-e2e/     ← you are here
+laga/
+├── tourney-api/     Go API — a fresh instance on :8095
+├── tourney-web/     SvelteKit app — a dev server on :4400, pointed at :8095
+└── tourney-e2e/     this repository
 ```
 
-Both are started and stopped by Playwright itself (`scripts/run-api.sh`,
-`scripts/run-web.sh`, wired as `webServer` entries in `playwright.config.ts`).
-You do not start them by hand, and this suite never touches whatever copy of
-tourney-api you already have running on your usual dev port.
+| Port   | Process                                                             |
+| ------ | ------------------------------------------------------------------- |
+| `8095` | The API instance for this suite, never your usual `:8090` dev server |
+| `4400` | The web dev server for this suite, never your usual `:5173`          |
 
-Everything runs **serially, one worker** (`workers: 1`, `fullyParallel: false`):
-every spec shares one database and one API process, and the presentation spec
-deliberately restarts the API at the very end. Don't parallelize this without
-rethinking that.
+Both ports are hardcoded in `playwright.config.ts`, the two scripts under `scripts/`, and `helpers/env.ts`. Change all four together.
 
-## Prerequisites
-
-- Node (whatever `tourney-web` requires — see its own `.nvmrc`).
-- `tourney-api` and `tourney-web` checked out as sibling directories (see the
-  layout above). `scripts/run-api.sh` / `run-web.sh` `cd` into them by
-  relative path.
-- A local Postgres for this suite alone, migrated and seeded (see below).
-  The suite refuses to run against anything that isn't localhost.
-- Go, to build/run `tourney-api` (`go run ./cmd/api`).
+Tests run **serially on one worker**. Every suite shares one database and one API process, and `z-present.spec.ts` restarts that API to test reconnection — which is why it sorts last. Parallelizing requires giving each worker its own database and API instance.
 
 ## Configuration
 
-Copy `.env.example` to `.env` (git-ignores itself) and point it at a database
-that exists for this suite and nothing else:
+Copy `.env.example` to `.env`. Git ignores it.
+
+| Variable                                    | Purpose                                                            |
+| ------------------------------------------- | ------------------------------------------------------------------ |
+| `E2E_DATABASE_URL`                          | The database under test, and what the API is booted against        |
+| `SEED_ADMIN_EMAIL` / `SEED_ORGANIZER_EMAIL` | The seeded accounts that setup signs in as                         |
+
+`helpers/env.ts` and `scripts/run-api.sh` resolve the database identically — `E2E_DATABASE_URL` first, then `tourney-api/.env`'s `DATABASE_URL` — so the test process and the API process cannot end up pointed at different databases.
+
+Pin the account addresses in this repository's `.env` rather than letting them fall through to `tourney-api/.env`. That file describes a developer's own setup and changes when they repoint it.
+
+## Sign-in and the OTP test hook
+
+There is no password. Sign-in is invitation-only: you enter an email address, the API emails a six-digit code, and you enter that code.
+
+This creates a problem for automation. The `otp_challenges` table stores only an irreversible HMAC-SHA256 hash of each code, deliberately, so no query can recover one. A person reads the code from an email; a browser test has no inbox.
+
+`scripts/run-api.sh` therefore sets `E2E_TEST_MODE=true`, which makes the API do two things:
+
+1. Force its fake email sender, so **no test in this suite can send a real email** — even with a live provider key in the environment.
+2. Mount `GET /internal/test/last-otp`, which returns the code that fake sender just recorded in memory. `helpers/otp.ts` reads it.
+
+The API refuses to start with `E2E_TEST_MODE` and `APP_ENV=production` set together, and only mounts the hook when the flag is on. Two independent guards would have to fail for this to reach production.
+
+## Test suites
+
+| Suite                | Tests | Covers                                                                                                      |
+| -------------------- | ----: | ----------------------------------------------------------------------------------------------------------- |
+| `auth.spec.ts`       |     8 | Two-step OTP sign-in, rejection of uninvited and invalid input, session persistence, route guards, and that signing out revokes the session server-side |
+| `admin.spec.ts`      |     7 | Invitations, suspension and reactivation with a mandatory reason, the last-super-admin guard, impersonation and exit, mobile layout |
+| `public.spec.ts`     |     6 | Public tournament pages, draft invisibility, mobile share layout                                            |
+| `scoring.spec.ts`    |     6 | Set scoring, walkover, retirement, cancellation, idempotent rescoring, correction locks                     |
+| `share.spec.ts`      |     6 | Share dialog URLs and filters, clipboard copy and its fallback, QR download, native share, WhatsApp intent   |
+| `scheduling.spec.ts` |     4 | Courts, slots, conflict detection, short-rest warnings                                                      |
+| `workflow.spec.ts`   |     4 | Creating a tournament, division, pairs, and fixtures end to end                                             |
+| `z-present.spec.ts`  |     3 | Presentation deck rotation, keyboard control, live updates over SSE, reconnection after an API restart      |
+
+## Running tests
 
 ```sh
-cp .env.example .env
+npm test                 # headless
+npm run test:headed      # watch a real browser window
+
+npx playwright test specs/scoring.spec.ts    # one suite
+npx playwright test -g "walkover"            # one test by name
 ```
 
-| Variable                                    | Where              | Used for                                                                          |
-| ------------------------------------------- | ------------------ | --------------------------------------------------------------------------------- |
-| `E2E_DATABASE_URL`                          | `tourney-e2e/.env` | The database under test — wiping `e2e-*` rows, and what the API is booted against |
-| `SEED_ORGANIZER_EMAIL` / `SEED_ADMIN_EMAIL` | either `.env`      | The seeded accounts `global-setup.ts` signs in as                                 |
-
-Both `helpers/env.ts` and `scripts/run-api.sh` resolve the database the same
-way — `E2E_DATABASE_URL` first, then `tourney-api/.env`'s `DATABASE_URL` —
-so the test process and the API process can never end up pointed at different
-databases.
-
-> [!WARNING]
-> **This suite is destructive, and it refuses to run against a non-local
-> database.** `global-setup.ts` deletes every `e2e-%` tournament, user and
-> invitation via `psql`, then the specs create real tournaments, users and
-> sessions. Before the `E2E_DATABASE_URL` override existed, the suite simply
-> borrowed `tourney-api/.env`'s `DATABASE_URL` — whatever a given machine
-> last pointed it at. Because the wipe is prefix-scoped, running against a
-> hosted project would have _quietly succeeded_ and left test data behind in
-> it. Both entry points now reject any URL that doesn't resolve to
-> `localhost` or `127.0.0.1`, and neither echoes the credentials when they do.
-
-Create and seed that database before the first run:
+Each test gets 90 seconds; each assertion gets 10. Traces are kept for failures only:
 
 ```sh
-createdb tourney_e2e
-cd ../tourney-api
-DATABASE_URL='postgresql://localhost:5432/tourney_e2e?sslmode=disable' \
-  go run ./cmd/migrate up
-DATABASE_URL='postgresql://localhost:5432/tourney_e2e?sslmode=disable' \
-SEED_ADMIN_EMAIL=admin@laga.test SEED_ORGANIZER_EMAIL=organizer@laga.test \
-SEED_ORG_NAME="Laga Demo" SEED_ORG_SLUG=laga-demo \
-  go run ./cmd/seed
+npx playwright show-trace test-results/<failed-test>/trace.zip
 ```
 
-Sign-in is invitation-only OTP, so a seeded account also needs a matching
-accepted invitation or it can never log in. `cmd/seed` creates both — that
-was a real gap, fixed alongside this suite's OTP update.
+## Troubleshooting
 
-`SEED_ORG_SLUG` **must be exactly `laga-demo`** — `cmd/seed/renon.go` looks up
-the demo organization by that literal slug (not by an env var) to attach the
-"Renon Cup 2026" fixture dataset that `public.spec.ts` and `share.spec.ts`
-read. Any other slug and the Renon seed step fails with `demo org missing`,
-and both specs then 404 looking for a tournament that was never created —
-that failure mode is a seeding mistake, not a suite bug, and it's exactly what
-happened the first time this baseline was verified against a fresh scratch
-database.
+**`public.spec.ts` and `share.spec.ts` fail with 404s.** The seed ran with the wrong organization slug. `cmd/seed/renon.go` looks up the demo organization by the literal string `laga-demo`, not by an environment variable, and skips the "Renon Cup 2026" fixture dataset when it cannot find it. Reseed with `SEED_ORG_SLUG=laga-demo`.
 
-## How sign-in works here
+**Setup fails with `OTP login did not complete`.** The addresses in `.env` do not match accounts in the database. Every account needs a matching accepted invitation to sign in; `cmd/seed` creates both. Confirm with `psql "$E2E_DATABASE_URL" -c 'table users'`.
 
-There is no password to type: Phase 5 made sign-in invitation-only email OTP.
-`otp_challenges` stores only an irreversible HMAC-SHA256 hash, so no query can
-recover a code — a human reads it from an email, and a browser test has no
-inbox.
+**A suite fails with HTTP 429.** The API allows three code requests per email per ten minutes, and the limit is real. Setup mints one session per account and `helpers/api.ts` reuses that token rather than signing in again, so a new sign-in for an address already used in the run can exhaust it. Use a fresh address, or wait.
 
-`scripts/run-api.sh` therefore sets `E2E_TEST_MODE=true`, which makes the API
-(a) force its fake email sender, so **no test in this suite can send a real
-email**, and (b) mount `GET /internal/test/last-otp`, which hands back the
-code that fake sender just recorded in memory. `helpers/otp.ts` reads it.
+**The run refuses to start, citing a non-local database.** Working as intended. Set `E2E_DATABASE_URL` to a local database.
 
-`config.Load()` refuses `E2E_TEST_MODE` alongside `APP_ENV=production`, and
-`cmd/api` only mounts the hook when it is set — two independent places would
-have to be wrong for this to reach production.
+**A new test cannot find an element that is clearly on the page.** Two known causes. Components hydrate after the first paint, so a click can land before the handler exists: it focuses the control, runs nothing, and the wait that follows burns the whole timeout on a page that looks correct in the trace. Use the retrying helpers in `helpers/ui.ts` — `fillStable`, `clickTab`, `openDialogVia`, `openMenuVia` — rather than a bare `click()`. Separately, a `bits-ui` select with a `name` also renders a hidden native `<select>`, so `getByRole('option')` matches twice; scope to `[role="option"]:visible`.
 
-## Ports
+**A context created with `browser.newContext()` is unexpectedly signed in.** Contexts created inside a test inherit that file's `test.use()` options, including `storageState`. Pass `storageState: undefined` and `baseURL` explicitly.
 
-| Port   | What                                                                            |
-| ------ | ------------------------------------------------------------------------------- |
-| `8095` | The e2e-only `tourney-api` instance (never your regular `:8090`/dev one)        |
-| `4400` | The e2e-only `tourney-web` dev server, `PUBLIC_API_BASE_URL` pointed at `:8095` |
+## Limitations
 
-Both are hardcoded across `playwright.config.ts`, the two `scripts/run-*.sh`
-files, and `helpers/env.ts` — change all four together if you ever need to.
+- **Delivery is not covered.** No test sends a real email, so a passing run says nothing about the email provider, DKIM and SPF alignment, or inbox placement. Verify those with a real send.
+- **One browser.** Desktop Chromium at 1280×800, plus explicit mobile viewport checks inside some suites. No Firefox or WebKit.
+- **No retries.** `retries: 0`, so a flaky test fails the run. That is deliberate: a retry that passes hides a race the product may also lose.
 
-## Running
+## Repository layout
 
-```sh
-npm install
-npx playwright install chromium   # once, or after a Playwright version bump
-npm test                          # headless
-npm run test:headed               # watch it drive a real browser window
+```
+helpers/     Shared utilities — API fixtures, hydration-safe UI actions, OTP readback
+scripts/     Launch scripts for the API and web servers
+specs/       Test suites
+global-setup.ts      Wipes test data, signs in both accounts, saves their sessions
+global-teardown.ts   Wipes test data again
 ```
 
-A single spec or grep:
+## Contributing
 
-```sh
-npx playwright test specs/scoring.spec.ts
-npx playwright test -g "walkover"
-```
+Run the full suite before opening a pull request; it must pass 44/44. Keep new tests inside the existing serial model, put shared UI interactions in `helpers/ui.ts` so hydration races are handled in one place, and prefix any data you create with `e2e-` so setup can clean it up.
 
-`playwright.config.ts` sets `timeout: 90_000` per test and
-`trace: 'retain-on-failure'` — on a failure, open the trace with:
+## License
 
-```sh
-npx playwright show-trace test-results/<failed-test-dir>/trace.zip
-```
-
-## Specs
-
-| File                 | Covers                                                                                                                                                                                    |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `admin.spec.ts`      | Platform admin: invitations, suspend/reactivate with a reason, the last-super-admin guard, impersonation and exit, mobile layout                                                          |
-| `auth.spec.ts`       | Two-step OTP sign-in, uninvited/invalid/wrong-code rejection, session persistence, JWT never leaking to the client, route guards, and that sign-out truly revokes the session server-side |
-| `public.spec.ts`     | Public tournament pages — overview/standings/bracket/schedule, draft invisibility, mobile share layout                                                                                    |
-| `scheduling.spec.ts` | Courts, slots, conflict detection, short-rest warnings                                                                                                                                    |
-| `scoring.spec.ts`    | Set scoring, walkover/retired/cancelled, idempotent rescoring, correction locks                                                                                                           |
-| `share.spec.ts`      | Share dialog URL/filters, clipboard copy + fallback, QR download, native share, WhatsApp intent                                                                                           |
-| `workflow.spec.ts`   | End-to-end organizer flow: create tournament → division → pairs → fixtures                                                                                                                |
-| `z-present.spec.ts`  | Presentation-mode deck: rotation, keyboard, live SSE updates, reconnect after an API restart                                                                                              |
-
-(`z-present` sorts last on purpose — it restarts the shared API instance, so
-nothing else may run after it in the same pass.)
-
-## Known limitations
-
-- **One worker, serial.** `workers: 1` and `fullyParallel: false`: the specs
-  share one API instance and one database, and `z-present.spec.ts` restarts
-  that API. Runtime is ~2–4 minutes.
-- **OTP request rate limiting is real, and in-process.** The API allows 3
-  requests per email per 10 minutes. `helpers/api.ts` works within that by
-  caching the token string that `global-setup.ts` already minted rather than
-  signing in per call site. A spec that adds a new sign-in for an existing
-  address can still trip it.
-- **No real email is ever sent, so delivery is not covered here.** That
-  this suite passes says nothing about whether Plunk, DKIM/SPF alignment or
-  inbox placement work — that needs a manual send to a real address.
+[MIT](LICENSE) © Muslim Alfatih

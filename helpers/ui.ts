@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import { getOtpCode } from './otp';
 
 // SvelteKit hydration re-renders value-bound inputs shortly after load, which
@@ -25,6 +25,24 @@ export async function openDialogVia(
 		await expect(page.getByRole('dialog')).toBeVisible({ timeout: 1_500 });
 	}).toPass({ timeout: 20_000 });
 	return page.getByRole('dialog');
+}
+
+/** Open a dropdown menu until its items actually exist.
+ *
+ *  Same hydration race as openDialogVia: a click that lands before the
+ *  component has hydrated focuses the trigger and runs no handler, so the menu
+ *  never opens and the wait for a menuitem burns the whole test timeout on a
+ *  page that looks perfectly fine in the trace. Retrying the trigger is what
+ *  distinguishes "not hydrated yet" from "this menu has no such item". */
+export async function openMenuVia(
+	page: Page,
+	trigger: Locator
+): Promise<ReturnType<Page['getByRole']>> {
+	await expect(async () => {
+		await trigger.click();
+		await expect(page.getByRole('menuitem').first()).toBeVisible({ timeout: 1_500 });
+	}).toPass({ timeout: 20_000 });
+	return page.getByRole('menu');
 }
 
 /** Click a tab until it actually selects (same hydration race). A RegExp is

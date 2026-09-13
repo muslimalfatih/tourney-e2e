@@ -1,7 +1,7 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import { apiContext, adminApiContext, api } from '../helpers/api';
 import { getOtpCode } from '../helpers/otp';
-import { openDialogVia, expectToast, clickTab } from '../helpers/ui';
+import { openDialogVia, expectToast, clickTab, openMenuVia } from '../helpers/ui';
 import { RUN, API_URL, WEB_URL } from '../helpers/env';
 
 // Journey — the platform control center: invitations, user management,
@@ -81,14 +81,14 @@ test.describe('platform administration', () => {
 
 		// Resend — its own confirmation, not fired straight from the row menu.
 		const row = page.locator('tr', { hasText: email });
-		await row.getByRole('button', { name: 'Row actions' }).click();
+		await openMenuVia(page, row.getByRole('button', { name: 'Row actions' }));
 		await page.getByRole('menuitem', { name: 'Resend' }).click();
 		await page.getByRole('button', { name: 'Confirm resend' }).click();
 		await expectToast(page, 'Invitation resent');
 
 		// Revoke — confirmed, then verified dead at the API: the revoked
 		// address can no longer even request a code.
-		await row.getByRole('button', { name: 'Row actions' }).click();
+		await openMenuVia(page, row.getByRole('button', { name: 'Row actions' }));
 		await page.getByRole('menuitem', { name: 'Revoke' }).click();
 		await page.getByRole('button', { name: 'Confirm revoke' }).click();
 		await expectToast(page, 'Invitation revoked');
@@ -147,7 +147,7 @@ test.describe('platform administration', () => {
 		const row = page.locator('tr', { hasText: email });
 		await expect(row).toBeVisible();
 
-		await row.getByRole('button', { name: 'Row actions' }).click();
+		await openMenuVia(page, row.getByRole('button', { name: 'Row actions' }));
 		await page.getByRole('menuitem', { name: 'Suspend' }).click();
 		const suspendDialog = page.getByRole('dialog');
 		const suspendSubmit = suspendDialog.getByRole('button', { name: 'Confirm suspend' });
@@ -157,7 +157,7 @@ test.describe('platform administration', () => {
 		await expectToast(page, 'Account suspended');
 		await expect(row.getByText('suspended', { exact: true })).toBeVisible();
 
-		await row.getByRole('button', { name: 'Row actions' }).click();
+		await openMenuVia(page, row.getByRole('button', { name: 'Row actions' }));
 		await page.getByRole('menuitem', { name: 'Reactivate' }).click();
 		const reactivateDialog = page.getByRole('dialog');
 		await reactivateDialog.locator('textarea[name="reason"]').fill('e2e reactivation check');
@@ -199,7 +199,7 @@ test.describe('platform administration', () => {
 		await page.goto('/super-admin/organizers');
 		await clickTab(page, /Users/);
 		const row = page.locator('tr', { hasText: email });
-		await row.getByRole('button', { name: 'Row actions' }).click();
+		await openMenuVia(page, row.getByRole('button', { name: 'Row actions' }));
 		await page.getByRole('menuitem', { name: 'Impersonate' }).click();
 		await page.getByRole('button', { name: 'Start impersonation' }).click();
 
@@ -230,7 +230,7 @@ test.describe('platform administration', () => {
 	test('force-unpublish a tournament requires a reason before the button enables', async ({ page }) => {
 		await page.goto('/super-admin/tournaments');
 		const row = page.locator('tbody tr').first();
-		await row.getByRole('button', { name: 'Row actions' }).click();
+		await openMenuVia(page, row.getByRole('button', { name: 'Row actions' }));
 		// Whichever force action this row offers first — publish or unpublish —
 		// the reason gate applies identically.
 		const forceItem = page.getByRole('menuitem', { name: /force (publish|unpublish)/i }).first();
