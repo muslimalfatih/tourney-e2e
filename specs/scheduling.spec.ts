@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { apiContext, api, makeRRTournament, addFixture } from '../helpers/api';
 import { expectToast, gotoAuthed, openDialogVia } from '../helpers/ui';
-import { ORGANIZER_EMAIL, ORGANIZER_PASSWORD } from '../helpers/env';
+import { ORGANIZER_EMAIL } from '../helpers/env';
 
 // Journey 4 — scheduling through the organizer schedule page: conflicts, the
 // rest warning with its explicit override, tournament-local confirmation
@@ -97,7 +97,7 @@ async function setSlotForm(page: Page, courtId: string, matchId: string | null, 
 test.describe.configure({ mode: 'serial' });
 
 test.beforeEach(async ({ page }) => {
-	await gotoAuthed(page, `/organizer/tournaments/${tournamentId}/schedule`, { email: ORGANIZER_EMAIL, password: ORGANIZER_PASSWORD });
+	await gotoAuthed(page, `/organizer/tournaments/${tournamentId}/schedule`, ORGANIZER_EMAIL);
 });
 
 test('courts, a normal slot, and the tournament-local success time', async ({ page }) => {

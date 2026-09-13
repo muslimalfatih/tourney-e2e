@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { fillStable, expectToast, gotoAuthed, clickTab, openDialogVia } from '../helpers/ui';
 import { apiContext, api } from '../helpers/api';
-import { ORGANIZER_EMAIL, ORGANIZER_PASSWORD } from '../helpers/env';
+import { ORGANIZER_EMAIL } from '../helpers/env';
 
 // Journey 2 — tournament workflow, driven through the real organizer UI:
 // create tournament → add division → add pairs → fixtures with duplicate
@@ -19,10 +19,7 @@ test('create tournament and division, add pairs', async ({ page }) => {
 	let attempt = 0;
 	await expect(async () => {
 		attempt++;
-		await gotoAuthed(page, '/organizer/tournaments/new', {
-			email: ORGANIZER_EMAIL,
-			password: ORGANIZER_PASSWORD
-		});
+		await gotoAuthed(page, '/organizer/tournaments/new', ORGANIZER_EMAIL);
 		await fillStable(page, 'input[name="name"]', 'E2E Flow Cup');
 		await fillStable(page, 'input[name="slug"]', `${SLUG}-${attempt}`);
 		// NOT page.click('button[type=submit]') — the admin header's Sign out
@@ -86,7 +83,7 @@ test('duplicate fixture blocked; decided fixture offers explicit rematch', async
 		(e) => e.name === 'E2E Doubles'
 	)!;
 	await ctx.dispose();
-	await gotoAuthed(page, `/organizer/events/${div.id}`, { email: ORGANIZER_EMAIL, password: ORGANIZER_PASSWORD });
+	await gotoAuthed(page, `/organizer/events/${div.id}`, ORGANIZER_EMAIL);
 	await clickTab(page, 'Draw setup');
 
 	// Fixture Alpha vs Bravo through the round-robin builder's selects.

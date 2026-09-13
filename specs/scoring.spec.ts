@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { apiContext, api, makeRRTournament, addFixture, scoreNormal } from '../helpers/api';
 import { expectToast, gotoAuthed } from '../helpers/ui';
-import { ORGANIZER_EMAIL, ORGANIZER_PASSWORD } from '../helpers/env';
+import { ORGANIZER_EMAIL } from '../helpers/env';
 
 // Journey 3 — scoring through the real score modal: every completion type,
 // tiebreak legality, same-result rescore, and the downstream lock on
@@ -81,7 +81,7 @@ async function fillSet(dialog: ReturnType<Page['locator']>, i: number, a: string
 test.describe.configure({ mode: 'serial' });
 
 test.beforeEach(async ({ page }) => {
-	await gotoAuthed(page, `/organizer/events/${rrEventId}/matches`, { email: ORGANIZER_EMAIL, password: ORGANIZER_PASSWORD });
+	await gotoAuthed(page, `/organizer/events/${rrEventId}/matches`, ORGANIZER_EMAIL);
 });
 
 test('7-6 without a tiebreak is rejected with a readable message; with one it saves', async ({
@@ -148,7 +148,7 @@ test('re-submitting the same decided result succeeds (idempotent rescore)', asyn
 });
 
 test('correcting a semi under a started final surfaces the downstream lock', async ({ page }) => {
-	await gotoAuthed(page, `/organizer/events/${seEventId}/matches`, { email: ORGANIZER_EMAIL, password: ORGANIZER_PASSWORD });
+	await gotoAuthed(page, `/organizer/events/${seEventId}/matches`, ORGANIZER_EMAIL);
 	// Start the final with a partial score so its feeds lock.
 	const final = await openScoreFor(page, 'Match 3');
 	await fillSet(final, 0, '3', '2');

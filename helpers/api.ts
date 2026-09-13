@@ -1,20 +1,64 @@
 import { request, type APIRequestContext } from '@playwright/test';
-import { API_URL, ORGANIZER_EMAIL, ORGANIZER_PASSWORD } from './env';
+import { readFileSync } from 'node:fs';
+import { API_URL, ORGANIZER_EMAIL, ADMIN_EMAIL } from './env';
 
 // Direct API fixture helpers. UI journeys stay UI-driven; these exist so a
 // spec can ARRANGE its scenario (create a division, publish, score a match)
 // without re-walking flows that other specs already cover.
+//
+// Signing in is OTP now, rate-limited to 3 requests per email per 10 minutes
+// -- and nine call sites across the suite ask for an organizer context. Two
+// designs were tried and rejected before this one:
+//
+//   1. A fresh OTP login per call. Nine call sites, several in separate spec
+//      files, blew through the 3-per-10-minutes limit before the run finished.
+//   2. Caching the {ctx, token} PAIR across calls. Playwright disposes every
+//      APIRequestContext created via the top-level `request` import at the
+//      end of the test (or file) it was created in, regardless of a JS-level
+//      reference surviving in this module's scope -- so a cached ctx from an
+//      earlier file failed with "context has been closed" the moment a later
+//      file tried to reuse it.
+//
+// What actually survives across files is a plain STRING: the access token
+// global-setup.ts already minted, read back out of the storageState file it
+// wrote. That's cached. The APIRequestContext wrapping it is cheap (no
+// network call) and created fresh per call, so it can never outlive the test
+// that asked for it.
+function tokenFromStorageState(path: string): string {
+	const state = JSON.parse(readFileSync(path, 'utf8')) as {
+		cookies: { name: string; value: string }[];
+	};
+	const cookie = state.cookies.find((c) => c.name === 'tourney_at');
+	if (!cookie) throw new Error(`no tourney_at cookie in ${path} -- did global-setup run?`);
+	return cookie.value;
+}
 
-export async function apiContext(): Promise<{ ctx: APIRequestContext; token: string }> {
+const tokenCache = new Map<string, string>();
+
+function tokenFor(email: string, storagePath: string): string {
+	let token = tokenCache.get(email);
+	if (!token) {
+		token = tokenFromStorageState(storagePath);
+		tokenCache.set(email, token);
+	}
+	return token;
+}
+
+async function contextFor(email: string, storagePath: string): Promise<{ ctx: APIRequestContext; token: string }> {
 	const ctx = await request.newContext({ baseURL: API_URL });
-	const res = await ctx.post(`${API_URL}/auth/login`, {
-		data: { email: ORGANIZER_EMAIL, password: ORGANIZER_PASSWORD }
-	});
-	if (!res.ok()) throw new Error(`API login failed: ${res.status()}`);
-	const body = await res.json();
-	const token = body.data?.access_token ?? body.access_token;
-	if (!token) throw new Error('API login returned no access_token');
-	return { ctx, token };
+	return { ctx, token: tokenFor(email, storagePath) };
+}
+
+/** An organizer's API context, using the session global-setup.ts already
+ *  created. A fresh (but network-free) request context per call, sharing
+ *  only the cached token. */
+export function apiContext(): Promise<{ ctx: APIRequestContext; token: string }> {
+	return contextFor(ORGANIZER_EMAIL, '.auth/organizer.json');
+}
+
+/** A super admin's API context — same idea, separate identity. */
+export function adminApiContext(): Promise<{ ctx: APIRequestContext; token: string }> {
+	return contextFor(ADMIN_EMAIL, '.auth/admin.json');
 }
 
 type Json = Record<string, unknown>;

@@ -1,4 +1,5 @@
 import { expect, type Page } from '@playwright/test';
+import { getOtpCode } from './otp';
 
 // SvelteKit hydration re-renders value-bound inputs shortly after load, which
 // can wipe a fill that landed too early. fillStable retries until the value
@@ -26,8 +27,10 @@ export async function openDialogVia(
 	return page.getByRole('dialog');
 }
 
-/** Click a tab until it actually selects (same hydration race). */
-export async function clickTab(page: Page, name: string): Promise<void> {
+/** Click a tab until it actually selects (same hydration race). A RegExp is
+ *  useful when the tab's label carries a live count that a test can't pin to
+ *  an exact number (e.g. "Users (4)"). */
+export async function clickTab(page: Page, name: string | RegExp): Promise<void> {
 	const tab = page.getByRole('tab', { name });
 	await expect(async () => {
 		await tab.click();
@@ -42,17 +45,17 @@ export async function expectToast(page: Page, text: string | RegExp): Promise<vo
 }
 
 /** Navigate to an authenticated page; if the shared storage state has gone
- * stale (refresh-token rotation is single-use), log back in through the UI. */
-export async function gotoAuthed(
-	page: Page,
-	path: string,
-	creds: { email: string; password: string }
-): Promise<void> {
+ * stale (refresh-token rotation is single-use), sign back in through the
+ * real OTP flow rather than reusing a stored session. */
+export async function gotoAuthed(page: Page, path: string, email: string): Promise<void> {
 	await page.goto(path);
 	if (/\/login/.test(page.url())) {
-		await fillStable(page, 'input[name="email"]', creds.email);
-		await page.fill('input[name="password"]', creds.password);
-		await page.click('button[type="submit"]');
+		await fillStable(page, 'input[name="email"]', email);
+		await page.getByRole('button', { name: 'Continue' }).click();
+		await page.getByLabel(/six-digit code/i).waitFor({ timeout: 15_000 });
+		const code = await getOtpCode(page.request, email);
+		await page.fill('input[name="code"]', code);
+		await page.getByRole('button', { name: /verify and sign in/i }).click();
 		await page.waitForURL('**/organizer**');
 		await page.goto(path);
 	}
